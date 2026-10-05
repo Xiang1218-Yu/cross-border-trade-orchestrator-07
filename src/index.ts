@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { URL } from 'node:url';
 import {
-  addShipmentEvent, allocateOrder, cancelOrder, closeOrder, confirmOrder, createApproval, createCustomsDeclaration, createOrder, decideApproval, deliverOrder, dispatchOrder, generateInvoice, getOrder, listAudit, listOrders, listOutbox, operationSummary, publishOutbox, recordPayment, state, timeline, updateCustoms
+  addShipmentEvent, allocateOrder, calculateShipmentEta, cancelOrder, closeOrder, confirmOrder, createApproval, createCustomsDeclaration, createOrder, createRoutePlan, decideApproval, deliverOrder, dispatchOrder, generateInvoice, getOrder, getRoutePlan, getShipment, listAudit, listOrders, listOutbox, listRoutePlans, lockRoutePlan, operationSummary, publishOutbox, publishRoutePlan, recordPayment, replaceRoutePlanLeg, replanRoutePlan, state, timeline, updateCustoms
 } from './domain.js';
 
 const port = Number(process.env.PORT ?? 4120);
@@ -30,10 +30,23 @@ const server = createServer(async (req, res) => {
     if (method === 'POST' && orderId && path.endsWith('/deliver')) return success(res, deliverOrder(tenant, orderId, user));
     if (method === 'POST' && orderId && path.endsWith('/close')) return success(res, closeOrder(tenant, orderId, user));
     if (method === 'POST' && orderId && path.endsWith('/cancel')) return success(res, cancelOrder(tenant, orderId, user));
+    if (method === 'GET' && path === '/api/route-plans') return success(res, listRoutePlans(tenant, url.searchParams.get('orderId') ?? undefined));
+    const routePlanId = path.match(/^\/api\/route-plans\/([^/]+)$/)?.[1];
+    if (method === 'GET' && routePlanId) return success(res, getRoutePlan(tenant, routePlanId));
+    const orderRoutePlansId = path.match(/^\/api\/orders\/([^/]+)\/route-plans$/)?.[1];
+    if (method === 'POST' && orderRoutePlansId) return success(res, createRoutePlan(tenant, { ...await readBody(req), orderId: orderRoutePlansId }, user), 201);
+    if (method === 'POST' && routePlanId && path.endsWith('/lock')) return success(res, lockRoutePlan(tenant, routePlanId, await readBody(req), user));
+    if (method === 'POST' && routePlanId && path.endsWith('/publish')) return success(res, publishRoutePlan(tenant, routePlanId, await readBody(req), user));
+    if (method === 'POST' && routePlanId && path.endsWith('/replan')) return success(res, replanRoutePlan(tenant, routePlanId, await readBody(req), user), 201);
+    if (method === 'POST' && routePlanId && path.endsWith('/replace-leg')) return success(res, replaceRoutePlanLeg(tenant, routePlanId, await readBody(req), user));
 
     if (method === 'POST' && path === '/api/customs/declarations') return success(res, createCustomsDeclaration(tenant, await readBody(req), user), 201);
     const customsId = path.match(/^\/api\/customs\/declarations\/([^/]+)$/)?.[1];
     if (method === 'PATCH' && customsId) return success(res, updateCustoms(tenant, customsId, await readBody(req), user));
+    const shipmentRouteId = path.match(/^\/api\/shipments\/([^/]+)$/)?.[1];
+    if (method === 'GET' && shipmentRouteId) return success(res, getShipment(tenant, shipmentRouteId));
+    const shipmentEtaId = path.match(/^\/api\/shipments\/([^/]+)\/eta$/)?.[1];
+    if (method === 'GET' && shipmentEtaId) return success(res, calculateShipmentEta(tenant, shipmentEtaId));
     const shipmentId = path.match(/^\/api\/shipments\/([^/]+)\/events$/)?.[1];
     if (method === 'POST' && shipmentId) return success(res, addShipmentEvent(tenant, shipmentId, await readBody(req), user), 201);
 
@@ -46,7 +59,7 @@ const server = createServer(async (req, res) => {
     if (method === 'GET' && path === '/api/outbox') return success(res, listOutbox(tenant, (url.searchParams.get('status') as 'pending' | 'published' | null) ?? undefined));
     const eventId = path.match(/^\/api\/outbox\/([^/]+)\/publish$/)?.[1];
     if (method === 'POST' && eventId) return success(res, publishOutbox(tenant, eventId, user));
-    if (method === 'GET' && path === '/api/meta') return success(res, { tenant: state.tenants.find(item => item.id === tenant), capabilities: ['orders', 'inventory-reservation', 'shipment-tracking', 'customs-compliance', 'billing', 'approvals', 'audit', 'outbox'] });
+    if (method === 'GET' && path === '/api/meta') return success(res, { tenant: state.tenants.find(item => item.id === tenant), capabilities: ['orders', 'inventory-reservation', 'route-planning', 'shipment-tracking', 'customs-compliance', 'billing', 'approvals', 'audit', 'outbox'] });
     return failure(res, new Error('路由不存在'), 404);
   } catch (error) { return failure(res, error); }
 });
